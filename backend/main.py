@@ -176,6 +176,43 @@ async def root():
 async def login(request: LoginRequest):
     phone = request.phone_number
     
+    # Close any existing client
+    if phone in clients:
+        try:
+            await clients[phone].disconnect()
+            del clients[phone]
+        except Exception as e:
+            logger.warning(f"Error disconnecting existing client: {e}")
+    
+    # Delete existing session file to force OTP flow
+    session_path = os.path.join(SESSIONS_DIR, f"{phone}.session")
+    if os.path.exists(session_path):
+        try:
+            os.remove(session_path)
+            logger.info(f"Deleted existing session file for {phone} to force OTP")
+        except Exception as e:
+            logger.error(f"Error deleting session file for {phone}: {e}")
+    
+    async def login_operation():
+        client = await get_client(phone)
+        
+        # We no longer need this check since we're deleting the session
+        # but keeping it just in case the deletion fails
+        if await client.is_user_authorized():
+            user = await client.get_me()
+            logger.info(f"User {phone} is already logged in: {user.first_name}")
+            return {"message": "Already logged in", "name": user.first_name, "phone_number": phone}
+        
+        await client.send_code_request(phone)
+        return {"message": "OTP sent", "phone_number": phone}
+    
+    try:
+        return await retry_operation(login_operation)
+    except Exception as e:
+        logger.error(f"Login error for {phone}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    phone = request.phone_number
+    
     # Close any existing client to prevent database locking
     if phone in clients:
         try:
