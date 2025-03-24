@@ -2,17 +2,18 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# List files to debug
-RUN ls -la
-
-# Copy all files from current directory
-COPY . .
-
-# Install dependencies
+# Copy requirements first for better caching
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy the rest of the application
+COPY . .
+
+# Create sessions directory
+RUN mkdir -p sessions
+
 # Set environment variables
-ENV PORT=8000
+ENV PORT=10000
 
 # Command to run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
