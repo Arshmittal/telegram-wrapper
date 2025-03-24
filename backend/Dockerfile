@@ -1,5 +1,4 @@
 FROM python:3.9-slim
-
 WORKDIR /app
 
 # Copy requirements first for better caching
@@ -12,8 +11,6 @@ COPY . .
 # Create sessions directory
 RUN mkdir -p sessions
 
-# Set environment variables
-ENV PORT=10000
-
-# Command to run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
+# Command to run the application - note the shell form 
+# to allow environment variable expansion
+CMD uvicorn main:app --host 0.0.0.0 --port $PORT
