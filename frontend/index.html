@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Wrapper</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f9f9f9;
+        }
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        .sidebar, .contacts, .chat {
+            padding: 20px;
+            border-right: 1px solid #ddd;
+            background: white;
+        }
+        .sidebar {
+            width: 30%;
+        }
+        .contacts {
+            width: 30%;
+            display: none;
+        }
+        .chat {
+            width: 40%;
+            display: none;
+        }
+        h2 {
+            color: #333;
+        }
+        button {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            background: blue;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        .account-box, .contact-item {
+            padding: 10px;
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            cursor: pointer;
+            background: white;
+            border-radius: 5px;
+            transition: 0.3s;
+        }
+        .account-box:hover, .contact-item:hover {
+            background: #e0e0e0;
+        }
+        #chatWindow {
+            height: 300px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            overflow-y: auto;
+            background: #fafafa;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 8px 12px;
+            border-radius: 15px;
+            max-width: 70%;
+        }
+        .sent {
+            background: #e1f5fe;
+            margin-left: auto;
+            text-align: right;
+        }
+        .received {
+            background: #f5f5f5;
+            margin-right: auto;
+            text-align: left;
+        }
+        .active-account {
+            background: #e0e0e0;
+            border-left: 4px solid blue;
+        }
+        .chatHeader {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .message-time {
+            font-size: 11px;
+            color: #777;
+            margin-top: 3px;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>Accounts</h2>
+            <input type="text" id="phoneInput" placeholder="Enter phone number">
+            <button onclick="login()">Login</button>
+            <div id="accountInfo"></div>
+        </div>
+        <div class="contacts" id="contactsSection">
+            <h2>Contacts</h2>
+            <ul id="contactsList"></ul>
+        </div>
+        <div class="chat" id="chatSection">
+            <div class="chatHeader">
+                <h2 id="chatContactName">Chat</h2>
+                <button onclick="refreshMessages()" style="width: auto;">Refresh</button>
+            </div>
+            <div id="chatWindow"></div>
+            <input type="text" id="messageInput" placeholder="Type a message">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+    <script>
+        const apiUrl = "http://127.0.0.1:8000";
+        let selectedPhone = null;
+        let selectedContact = null;
+        let selectedContactName = null;
+        let accounts = [];
+        let lastMessageId = 0;
+        let pollingInterval = null;
+
+        async function login() {
+            const phone = document.getElementById("phoneInput").value;
+            if (!phone) {
+                alert("Please enter a phone number");
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${apiUrl}/auth/login`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ phone_number: phone })
+                });
+                const data = await response.json();
+
+                if (data.message.includes("OTP")) {
+                    let otp = prompt("Enter OTP received on Telegram:");
+                    if (otp) {
+                        verifyOTP(phone, otp);
+                    }
+                } else {
+                    addAccount(phone, data.name);
+                    document.getElementById("phoneInput").value = ""; // Clear phone input
+                    fetchContacts(phone);
+                }
+            } catch (error) {
+                console.error(error);
+                alert("Login failed: " + error);
+            }
+        }
+
+        async function verifyOTP(phone, otp) {
+            try {
+                const response = await fetch(`${apiUrl}/auth/verify`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ phone_number: phone, code: otp })
+                });
+                const data = await response.json();
+                
+                if (data.message.includes("successful")) {
+                    addAccount(phone, data.name);
+                    document.getElementById("phoneInput").value = ""; // Clear phone input
+                    fetchContacts(phone);
+                } else if (data.detail === "2FA password required") {
+                    const password = prompt("Enter your 2FA password:");
+                    if (password) {
+                        verify2FA(phone, otp, password);
+                    }
+                } else {
+                    alert(data.message || data.detail);
+                }
+            } catch (error) {
+                console.error(error);
+                if (error.toString().includes("2FA")) {
+                    const password = prompt("Enter your 2FA password:");
+                    if (password) {
+                        verify2FA(phone, otp, password);
+                    }
+                } else {
+                    alert("Verification failed: " + error);
+                }
+            }
+        }
+
+        async function verify2FA(phone, otp, password) {
+            try {
+                const response = await fetch(`${apiUrl}/auth/verify`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ phone_number: phone, code: otp, password: password })
+                });
+                const data = await response.json();
+                
+                if (data.message.includes("successful")) {
+                    addAccount(phone, data.name);
+                    document.getElementById("phoneInput").value = ""; // Clear phone input
+                    fetchContacts(phone);
+                } else {
+                    alert(data.message || data.detail);
+                }
+            } catch (error) {
+                console.error(error);
+                alert("2FA verification failed: " + error);
+            }
+        }
+
+        function addAccount(phone, name) {
+            // Check if account already exists
+            if (!accounts.some(acc => acc.phone === phone)) {
+                accounts.push({ phone, name });
+            }
+            
+            // Update the accounts display
+            updateAccountsDisplay();
+            
+            // Select this account
+            selectAccount(phone);
+        }
+
+        function updateAccountsDisplay() {
+            const accountsContainer = document.getElementById("accountInfo");
+            accountsContainer.innerHTML = "";
+            
+            accounts.forEach(account => {
+                const accountBox = document.createElement("div");
+                accountBox.className = "account-box";
+                if (account.phone === selectedPhone) {
+                    accountBox.classList.add("active-account");
+                }
+                accountBox.innerHTML = `<strong>${account.name}</strong> (${account.phone})`;
+                accountBox.onclick = () => selectAccount(account.phone);
+                accountsContainer.appendChild(accountBox);
+            });
+        }
+
+        function selectAccount(phone) {
+            selectedPhone = phone;
+            updateAccountsDisplay();
+            fetchContacts(phone);
+        }
+
+        async function fetchContacts(phone) {
+            try {
+                const response = await fetch(`${apiUrl}/contacts/${phone}`);
+                const data = await response.json();
+                
+                const contactsList = document.getElementById("contactsList");
+                contactsList.innerHTML = "";
+                
+                document.getElementById("contactsSection").style.display = "block";
+                
+                data.contacts.forEach(contact => {
+                    let li = document.createElement("li");
+                    li.className = "contact-item";
+                    li.textContent = contact.name;
+                    li.onclick = () => openChat(contact.id, contact.name, phone);
+                    contactsList.appendChild(li);
+                });
+            } catch (error) {
+                console.error(error);
+                
+            }
+        }
+
+        function openChat(contactId, contactName, phone) {
+            // Stop any existing polling
+            stopPolling();
+            
+            selectedPhone = phone;
+            selectedContact = contactId;
+            selectedContactName = contactName;
+            
+            document.getElementById("chatSection").style.display = "block";
+            document.getElementById("chatContactName").textContent = `Chat with ${contactName}`;
+            document.getElementById("chatWindow").innerHTML = "Loading messages...";
+            
+            // Update accounts display to show the active account
+            updateAccountsDisplay();
+            
+            // Fetch messages
+            fetchMessages();
+            
+            // Start polling for new messages
+            startPolling();
+        }
+
+        async function fetchMessages() {
+            try {
+                const response = await fetch(`${apiUrl}/messages/${selectedPhone}/${selectedContact}`);
+                const data = await response.json();
+                
+                displayMessages(data.messages, true);
+                
+                // Update last message ID for polling
+                if (data.messages.length > 0) {
+                    lastMessageId = data.messages[data.messages.length - 1].id;
+                }
+            } catch (error) {
+                console.error("Error fetching messages:", error);
+                document.getElementById("chatWindow").innerHTML = "Error loading messages. Please try again.";
+            }
+        }
+        
+        function displayMessages(messages, clearChat = false) {
+            const chatWindow = document.getElementById("chatWindow");
+            
+            if (clearChat) {
+                chatWindow.innerHTML = "";
+            }
+            
+            messages.forEach(message => {
+                const messageElement = document.createElement("div");
+                messageElement.className = `message ${message.outgoing ? 'sent' : 'received'}`;
+                
+                // Format timestamp
+                const timestamp = new Date(message.timestamp);
+                const formattedTime = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const formattedDate = timestamp.toLocaleDateString();
+                
+                messageElement.innerHTML = `
+                    ${message.text}
+                    <span class="message-time">${formattedTime} ${formattedDate}</span>
+                `;
+                
+                chatWindow.appendChild(messageElement);
+            });
+            
+            // Scroll to the bottom of the chat window
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+        
+        function startPolling() {
+            // Poll every 5 seconds for new messages
+            pollingInterval = setInterval(pollForNewMessages, 5000);
+        }
+        
+        function stopPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+        
+        async function pollForNewMessages() {
+            if (!selectedPhone || !selectedContact) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${apiUrl}/poll_messages/${selectedPhone}/${selectedContact}?last_message_id=${lastMessageId}`);
+                const data = await response.json();
+                
+                if (data.messages && data.messages.length > 0) {
+                    // Display new messages
+                    displayMessages(data.messages);
+                    
+                    // Update last message ID
+                    lastMessageId = data.messages[data.messages.length - 1].id;
+                }
+            } catch (error) {
+                console.error("Error polling for messages:", error);
+            }
+        }
+        
+        function refreshMessages() {
+            fetchMessages();
+        }
+
+        async function sendMessage() {
+            const messageInput = document.getElementById("messageInput");
+            const message = messageInput.value.trim();
+            
+            if (!message) {
+                alert("Please enter a message");
+                return;
+            }
+            
+            if (!selectedPhone || !selectedContact) {
+                alert("Please select a contact first");
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${apiUrl}/send_message`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        phone_number: selectedPhone,
+                        contact_id: selectedContact,
+                        message: message
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.message.includes("success")) {
+                    // Clear the message input
+                    messageInput.value = "";
+                    
+                    // Fetch messages again to show the sent message
+                    fetchMessages();
+                } else {
+                    alert(data.message || data.detail);
+                }
+            } catch (error) {
+                console.error(error);
+                alert("Failed to send message: " + error);
+            }
+        }
+        
+        // Add event listener for Enter key in message input
+        document.getElementById("messageInput").addEventListener("keypress", function(event) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
