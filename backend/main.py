@@ -279,6 +279,34 @@ async def get_contacts(phone_number: str):
             raise HTTPException(status_code=403, detail="User not logged in")
         
         dialogs = await client.get_dialogs()
+        contacts_list = []
+        
+        for d in dialogs:
+            # Include both users and groups
+            contact_type = "user" if d.is_user else "group" if d.is_group else "channel" if d.is_channel else "other"
+            contacts_list.append({
+                "id": d.id,
+                "name": d.title or "Unknown",
+                "type": contact_type,
+                "unread_count": d.unread_count
+            })
+        
+        return {"contacts": contacts_list}
+    
+    try:
+        return await retry_operation(contacts_operation)
+    except Exception as e:
+        logger.error(f"Error fetching contacts for {phone_number}: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(f"Fetching contacts for {phone_number}")
+    
+    async def contacts_operation():
+        client = await get_client(phone_number)
+        
+        if not await client.is_user_authorized():
+            raise HTTPException(status_code=403, detail="User not logged in")
+        
+        dialogs = await client.get_dialogs()
         contacts_list = [{"id": d.id, "name": d.title or "Unknown"} for d in dialogs if d.is_user]
         return {"contacts": contacts_list}
     
