@@ -23,6 +23,12 @@
         .sidebar {
             width: 30%;
         }
+        .image-message img {
+        max-width: 200px;  /* Reduced width */
+        max-height: 200px; /* Reduced height */
+        object-fit: cover; /* Ensures image fills the space without distortion */
+        border-radius: 8px;
+    }
         .contacts {
             width: 30%;
             display: none;
@@ -121,7 +127,7 @@
         </div>
     </div>
     <script>
-        const apiUrl ="https://telegram-wrapper.onrender.com";
+        const apiUrl = "https://telegram-wrapper.onrender.com/";
         let selectedPhone = null;
         let selectedContact = null;
         let selectedContactName = null;
@@ -314,33 +320,127 @@
         }
         
         function displayMessages(messages, clearChat = false) {
-            const chatWindow = document.getElementById("chatWindow");
-            
-            if (clearChat) {
-                chatWindow.innerHTML = "";
-            }
-            
-            messages.forEach(message => {
-                const messageElement = document.createElement("div");
+    const chatWindow = document.getElementById("chatWindow");
+   
+    if (clearChat) {
+        chatWindow.innerHTML = "";
+    }
+   
+    // URL detection and linking regex
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+
+    messages.forEach(message => {
+        const messageElement = document.createElement("div");
+       
+        // Format timestamp
+        const timestamp = new Date(message.timestamp);
+        const formattedTime = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const formattedDate = timestamp.toLocaleDateString();
+       
+        // Function to convert text with URLs to clickable links
+        function linkifyText(text) {
+            return text.replace(urlRegex, function(url) {
+                return `<a href="${url}" target="_blank" style="color: blue; text-decoration: underline;">${url}</a>`;
+            });
+        }
+       
+        // Handle different message types
+        switch(message.type) {
+            case 'text':
                 messageElement.className = `message ${message.outgoing ? 'sent' : 'received'}`;
-                
-                // Format timestamp
-                const timestamp = new Date(message.timestamp);
-                const formattedTime = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                const formattedDate = timestamp.toLocaleDateString();
-                
+                // Linkify the text message
+                const linkedText = linkifyText(message.text);
                 messageElement.innerHTML = `
-                    ${message.text}
+                    ${linkedText}
                     <span class="message-time">${formattedTime} ${formattedDate}</span>
                 `;
+                break;
+           
+            case 'image':
+                messageElement.className = `message image-message ${message.outgoing ? 'sent' : 'received'}`;
+               
+                // Construct image element
+                const imgElement = document.createElement('img');
+               
+                // Construct full image URL
+                const imageUrl = `${apiUrl}/media/${encodeURIComponent(message.file_path)}`;
+               
+                imgElement.src = imageUrl;
+                imgElement.alt = 'Received image';
                 
-                chatWindow.appendChild(messageElement);
-            });
-            
-            // Scroll to the bottom of the chat window
-            chatWindow.scrollTop = chatWindow.scrollHeight;
+                imgElement.style.cursor = 'pointer';  // Show it's clickable
+                
+                // Add click event to open full-size image
+                imgElement.onclick = () => {
+                    const fullSizeWindow = window.open('', '_blank');
+                    fullSizeWindow.document.write(`
+                        <html>
+                            <head>
+                                <title>Full Size Image</title>
+                                <style>
+                                    body { 
+                                        display: flex; 
+                                        justify-content: center; 
+                                        align-items: center; 
+                                        height: 100vh; 
+                                        margin: 0; 
+                                        background: rgba(0,0,0,0.8); 
+                                    }
+                                    img { 
+                                        max-width: 90%; 
+                                        max-height: 90%; 
+                                        object-fit: contain; 
+                                    }
+                                </style>
+                            </head>
+                            <body>
+                                <img src="${imageUrl}" alt="Full Size Image">
+                            </body>
+                        </html>
+                    `);
+                };
+               
+                // Add error handling for image loading
+                imgElement.onerror = () => {
+                    console.error('Failed to load image:', imageUrl);
+                    imgElement.alt = 'Image failed to load';
+                    imgElement.src = 'path/to/placeholder/image.png';
+                };
+               
+                // Append image to message
+                messageElement.appendChild(imgElement);
+               
+                // Add text if exists, with linkification
+                if (message.text) {
+                    const captionElement = document.createElement('div');
+                    captionElement.className = 'image-caption';
+                    // Linkify the caption text
+                    captionElement.innerHTML = linkifyText(message.text);
+                    messageElement.appendChild(captionElement);
+                }
+               
+                // Add timestamp
+                const imageTimeSpan = document.createElement('span');
+                imageTimeSpan.className = 'message-time';
+                imageTimeSpan.textContent = `${formattedTime} ${formattedDate}`;
+                messageElement.appendChild(imageTimeSpan);
+                break;
+           
+            case 'media_error':
+                messageElement.className = `message media-error ${message.outgoing ? 'sent' : 'received'}`;
+                messageElement.innerHTML = `
+                    Error loading media: ${message.text || 'Unknown error'}
+                    <span class="message-time">${formattedTime} ${formattedDate}</span>
+                `;
+                break;
         }
-        
+       
+        chatWindow.appendChild(messageElement);
+    });
+   
+    // Scroll to the bottom of the chat window
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+}
         function startPolling() {
             // Poll every 5 seconds for new messages
             pollingInterval = setInterval(pollForNewMessages, 5000);
