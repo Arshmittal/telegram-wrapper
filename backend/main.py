@@ -4,6 +4,7 @@ import asyncio
 import time
 from typing import Dict, Any
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from telethon import TelegramClient
 from telethon.tl.types import User
@@ -24,6 +25,8 @@ logger = logging.getLogger("telegram_api")
 # Telegram API credentials
 API_ID = int(os.environ.get("API_ID", "26725988"))
 API_HASH = os.environ.get("API_HASH", "b3692b28078c068aa5a3643ee2870986")
+
+
 
 # Store session files
 SESSIONS_DIR = "sessions"
@@ -64,7 +67,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+MEDIA_DIR = os.path.join(SESSIONS_DIR, "media")
+os.makedirs(MEDIA_DIR, exist_ok=True)
 
+# Mount static files middleware
+app.mount("/media", StaticFiles(directory=SESSIONS_DIR), name="media")
 # The rest of your code remains unchanged...
 
 # Client management functions
@@ -349,13 +356,53 @@ async def get_messages(phone_number: str, contact_id: int, limit: int = 50):
         messages = []
         # Fetch messages with the specific contact
         async for message in client.iter_messages(contact_id, limit=limit):
-            if message.text:  # Only include text messages
-                messages.append({
-                    "id": message.id,
-                    "text": message.text,
-                    "outgoing": message.out,
-                    "timestamp": message.date.isoformat()
-                })
+            message_info = {
+                "id": message.id,
+                "outgoing": message.out,
+                "timestamp": message.date.isoformat()
+            }
+            
+            # Handle text messages
+            if message.text:
+                message_info["text"] = message.text
+                message_info["type"] = "text"
+            
+            # Handle media messages (images, documents, etc.)
+            if message.media:
+                try:
+                    # Download media if it's an image
+                    if hasattr(message.media, 'photo'):
+                        # Generate a unique filename
+                        filename = f"{phone_number}_{contact_id}_{message.id}_image.jpg"
+                        full_path = os.path.join(SESSIONS_DIR, filename)
+                        
+                        # Download the image
+                        await client.download_media(message, file=full_path)
+                        
+                        message_info["type"] = "image"
+                        message_info["file_path"] = filename  # Use relative path
+                        message_info["text"] = message.text or ""
+                    
+                    # Optionally handle other media types
+                    elif hasattr(message.media, 'document'):
+                        filename = f"{phone_number}_{contact_id}_{message.id}_document"
+                        full_path = os.path.join(SESSIONS_DIR, filename)
+                        
+                        # Download the document
+                        await client.download_media(message, file=full_path)
+                        
+                        message_info["type"] = "document"
+                        message_info["file_path"] = filename  # Use relative path
+                        message_info["text"] = message.text or ""
+                
+                except Exception as media_error:
+                    logger.error(f"Error processing media: {media_error}")
+                    message_info["type"] = "media_error"
+                    message_info["error"] = str(media_error)
+            
+            # Only add messages with content
+            if len(message_info) > 3:  # more than id, outgoing, and timestamp
+                messages.append(message_info)
         
         # Reverse to get oldest first
         messages.reverse()
@@ -367,8 +414,10 @@ async def get_messages(phone_number: str, contact_id: int, limit: int = 50):
         logger.error(f"Error fetching messages for {phone_number}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
+# Similar changes should be made to the poll_messages function
 @app.get("/poll_messages/{phone_number}/{contact_id}")
 async def poll_messages(phone_number: str, contact_id: int, last_message_id: int = 0):
+    logger.info(f"Polling messages for {phone_number} since message {last_message_id}")
     
     async def poll_operation():
         client = await get_client(phone_number)
@@ -379,13 +428,55 @@ async def poll_messages(phone_number: str, contact_id: int, last_message_id: int
         messages = []
         # Fetch newer messages since last_message_id
         async for message in client.iter_messages(contact_id, min_id=last_message_id):
-            if message.text:  # Only include text messages
-                messages.append({
-                    "id": message.id,
-                    "text": message.text,
-                    "outgoing": message.out,
-                    "timestamp": message.date.isoformat()
-                })
+            message_info = {
+                "id": message.id,
+                "outgoing": message.out,
+                "timestamp": message.date.isoformat()
+            }
+            
+            # Handle text messages
+            if message.text:
+                message_info["text"] = message.text
+                message_info["type"] = "text"
+            
+            # Handle media messages (images, documents, etc.)
+            if message.media:
+                try:
+                    # Download media if it's an image
+                    if hasattr(message.media, 'photo'):
+                        # Generate a unique filename in a media subdirectory
+                        media_dir = os.path.join(SESSIONS_DIR, "media")
+                        os.makedirs(media_dir, exist_ok=True)
+                        filename = os.path.join(media_dir, f"{phone_number}_{contact_id}_{message.id}_image.jpg")
+                        
+                        # Download the image
+                        await client.download_media(message, file=filename)
+                        
+                        message_info["type"] = "image"
+                        message_info["file_path"] = filename
+                        message_info["text"] = message.text or ""
+                    
+                    # Optionally handle other media types
+                    elif hasattr(message.media, 'document'):
+                        media_dir = os.path.join(SESSIONS_DIR, "media")
+                        os.makedirs(media_dir, exist_ok=True)
+                        filename = os.path.join(media_dir, f"{phone_number}_{contact_id}_{message.id}_document")
+                        
+                        # Download the document
+                        await client.download_media(message, file=filename)
+                        
+                        message_info["type"] = "document"
+                        message_info["file_path"] = filename
+                        message_info["text"] = message.text or ""
+                
+                except Exception as media_error:
+                    logger.error(f"Error processing media: {media_error}")
+                    message_info["type"] = "media_error"
+                    message_info["error"] = str(media_error)
+            
+            # Only add messages with content
+            if len(message_info) > 3:  # more than id, outgoing, and timestamp
+                messages.append(message_info)
         
         # Reverse to get oldest first
         messages.reverse()
@@ -396,3 +487,5 @@ async def poll_messages(phone_number: str, contact_id: int, last_message_id: int
     except Exception as e:
         logger.error(f"Error polling messages for {phone_number}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    
+
